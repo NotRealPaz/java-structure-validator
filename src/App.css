@@ -1,0 +1,33 @@
+.App {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+  text-align: center;
+}
+
+.drop-container {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 20px;
+}
+
+.drop-box {
+  width: 45%;
+  border: 2px dashed #888;
+  border-radius: 8px;
+  padding: 20px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.drop-box:hover {
+  background-color: #f9f9f9;
+}
+
+.output {
+  margin-top: 20px;
+  text-align: left;
+  white-space: pre-wrap;
+  background: #eee;
+  padding: 10px;
+  border-radius: 4px;
+}
