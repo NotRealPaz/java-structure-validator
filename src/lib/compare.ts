@@ -1,31 +1,53 @@
+// compare.ts
 import type { AttributeInfo, ClassInfo, MethodInfo } from "./parser.ts";
 
 export const BoxA = "Teacher";
 export const BoxB = "Student";
 
-const checkAttributeSignature = (
-	attributes: AttributeInfo[],
-): [[string, string], number][] => {
+export interface AttributeComparison {
+	message: string;
+	color: string;
+	count?: number; // Optional count for matches
+}
+
+export interface MethodComparison {
+	message: string;
+	color: string;
+	count?: number; // Optional count for matches
+}
+
+export interface InheritanceComparison {
+	message: string;
+	color: string;
+}
+
+export interface ClassComparison {
+	name: string;
+	type: "class";
+	color: string;
+	attributes: AttributeComparison[];
+	methods: MethodComparison[];
+	inheritance?: InheritanceComparison;
+	children?: ClassComparison[];
+	extends?: string;
+}
+
+const checkAttributeSignature = (attributes: AttributeInfo[]) => {
 	return [
 		...new Set(attributes.map((attr) => `${attr.modifier}|${attr.type}`)),
 	].map((signature) => {
-		// Assert that split returns a tuple of [string, string]
 		const [sigMod, sigType] = signature.split("|") as [string, string];
 		const count = attributes.filter(
 			(attr) => attr.modifier === sigMod && attr.type === sigType,
 		).length;
-		return [[sigMod, sigType], count];
+		return { modifier: sigMod, type: sigType, count };
 	});
 };
 
-const checkMethodSignature = (
-	methods: MethodInfo[],
-): [[string, string, string], number][] => {
+const checkMethodSignature = (methods: MethodInfo[]) => {
 	return [
 		...new Set(
 			methods.map((method) => {
-				// Create a signature ignoring the method name.
-				// Signature: modifier|returnType|paramType1,paramType2,...
 				const paramTypes = method.parameters
 					.map((param) => param.type)
 					.join(",");
@@ -46,86 +68,144 @@ const checkMethodSignature = (
 				paramTypes === sigParam
 			);
 		}).length;
-		return [[sigMod, sigReturn, sigParam], count];
+		return {
+			modifier: sigMod,
+			returnType: sigReturn,
+			parameters: sigParam,
+			count,
+		};
 	});
 };
 
 export function compareParsedClasses(
 	a: ClassInfo[],
 	b: ClassInfo[],
-): { Identical: boolean; errors: string[] } {
-	const errors: string[] = [];
+): ClassComparison[] {
+	const comparisonTree: ClassComparison[] = [];
 	const teacherClassNames = new Set(a.map((c) => c.name));
 
-	// Check for class number mismatch.
-	if (a.length !== b.length) {
-		errors.push(
-			`Class number mismatch ${BoxA}:[${a.length}] ${BoxB}:[${b.length}]`,
-		);
-	}
-
-	// Iterate through classes in teacher result.
 	for (const className of teacherClassNames) {
 		const aClass = a.find((c) => c.name === className) as ClassInfo;
 		const bClass = b.find((c) => c.name === className);
+
+		const classNode: ClassComparison = {
+			name: className,
+			type: "class",
+			color: "text-green-500",
+			attributes: [],
+			methods: [],
+			extends: aClass.extends,
+		};
+
 		if (!bClass) {
-			errors.push(`Class ${className} not found in ${BoxB} result.`);
+			classNode.color = "text-red-500";
+			const aAttrSignature = checkAttributeSignature(aClass.attributes);
+			for (const { modifier, type, count } of aAttrSignature) {
+				classNode.attributes.push({
+					message: `+ ${modifier} ${type} (Count: ${count})`,
+					color: "text-red-500",
+					count,
+				});
+			}
+			const aMethodSignature = checkMethodSignature(aClass.methods);
+			for (const {
+				modifier,
+				returnType,
+				parameters,
+				count,
+			} of aMethodSignature) {
+				const tempMod = modifier !== "default" ? `${modifier} ` : "";
+				classNode.methods.push({
+					message: `+ ${tempMod}${returnType}(${parameters}) (Count: ${count})`,
+					color: "text-red-500",
+					count,
+				});
+			}
+			comparisonTree.push(classNode);
 			continue;
 		}
 
-		// --- Attribute Checking ---
-		const aAttributes = aClass.attributes;
-		const bAttributes = bClass.attributes;
-		const aAttrSignature = checkAttributeSignature(aAttributes);
-		const bAttrSignature = checkAttributeSignature(bAttributes);
+		if (aClass.extends !== bClass.extends) {
+			classNode.inheritance = {
+				message: `| ${BoxA} ${aClass.extends ? `extends '${aClass.extends}'` : "didn't extend"} vs ${BoxB} ${bClass.extends ? `extends '${bClass.extends}'` : "didn't extend"}`,
+				color: "text-red-500",
+			};
+			classNode.color = "text-red-500";
+		}
 
-		if (JSON.stringify(aAttrSignature) !== JSON.stringify(bAttrSignature)) {
-			errors.push(
-				`Attribute mismatch for class ${className}: ${BoxA}:[${aAttributes.length}] ${BoxB}:[${bAttributes.length}]`,
+		const aAttrSignature = checkAttributeSignature(aClass.attributes);
+		const bAttrSignature = checkAttributeSignature(bClass.attributes);
+
+		for (const { modifier, type, count } of aAttrSignature) {
+			const matching = bAttrSignature.find(
+				(attr) => attr.modifier === modifier && attr.type === type,
 			);
-			for (const [sig, count] of aAttrSignature) {
-				const matching = bAttrSignature.find(
-					(x) => x[0][0] === sig[0] && x[0][1] === sig[1],
-				);
-				if (!matching) {
-					errors.push(
-						`Attribute '${sig[0]} ${sig[1]}' missing from class ${className} in ${BoxB} result.`,
-					);
-				} else if (matching[1] !== count) {
-					errors.push(
-						`Attribute '${sig[0]} ${sig[1]}' count mismatch for class ${className}: ${BoxA}:[${count}] ${BoxB}:[${matching[1]}]`,
-					);
-				}
+			if (!matching) {
+				classNode.attributes.push({
+					message: `- ${modifier} ${type}`,
+					color: "text-red-500",
+				});
+			} else if (matching.count < count) {
+				classNode.attributes.push({
+					message: `- ${modifier} ${type} (${BoxA} [${count}] x ${BoxB} [${matching.count}])`,
+					color: "text-red-500",
+				});
+			} else if (matching.count > count) {
+				classNode.attributes.push({
+					message: `~ ${modifier} ${type} (${BoxA} [${count}] x ${BoxB} [${matching.count}])`,
+					color: "text-yellow-500",
+				});
+			} else {
+				classNode.attributes.push({
+					message: `+ ${modifier} ${type} (Count: ${count})`,
+					color: "text-green-500",
+					count: count,
+				});
 			}
 		}
 
-		// --- Method Checking (ignoring method name) ---
-		const aMethods = aClass.methods;
-		const bMethods = bClass.methods;
-		const aMethodSignature = checkMethodSignature(aMethods);
-		const bMethodSignature = checkMethodSignature(bMethods);
+		const aMethodSignature = checkMethodSignature(aClass.methods);
+		const bMethodSignature = checkMethodSignature(bClass.methods);
 
-		if (JSON.stringify(aMethodSignature) !== JSON.stringify(bMethodSignature)) {
-			errors.push(
-				`Method mismatch for class ${className}: ${BoxA}:[${aMethods.length}] ${BoxB}:[${bMethods.length}]`,
+		for (const {
+			modifier,
+			returnType,
+			parameters,
+			count,
+		} of aMethodSignature) {
+			const matching = bMethodSignature.find(
+				(method) =>
+					method.modifier === modifier &&
+					method.returnType === returnType &&
+					method.parameters === parameters,
 			);
-			for (const [sig, count] of aMethodSignature) {
-				const [mod, ret, params] = sig;
-				const matching = bMethodSignature.find(
-					(x) => x[0][0] === mod && x[0][1] === ret && x[0][2] === params,
-				);
-				if (!matching) {
-					errors.push(
-						`Method with signature '${mod} ${ret}(${params})' missing from class ${className} in ${BoxB} result.`,
-					);
-				} else if (matching[1] !== count) {
-					errors.push(
-						`Method with signature '${mod} ${ret}(${params})' count mismatch for class ${className}: ${BoxA}:[${count}] ${BoxB}:[${matching[1]}]`,
-					);
-				}
+			const tempMod = modifier !== "default" ? `${modifier} ` : "";
+			if (!matching) {
+				classNode.methods.push({
+					message: `- ${tempMod}${returnType}(${parameters})`,
+					color: "text-red-500",
+				});
+			} else if (matching.count < count) {
+				classNode.methods.push({
+					message: `- ${tempMod}${returnType}(${parameters}) (${BoxA} [${count}] x ${BoxB} [${matching.count}])`,
+					color: "text-red-500",
+				});
+			} else if (matching.count > count) {
+				classNode.methods.push({
+					message: `~ ${tempMod}${returnType}(${parameters}) (${BoxA} [${count}] x ${BoxB} [${matching.count}])`,
+					color: "text-yellow-500",
+				});
+			} else {
+				classNode.methods.push({
+					message: `+ ${tempMod}${returnType}(${parameters}) (Count: ${count})`,
+					color: "text-green-500",
+					count: count,
+				});
 			}
 		}
+
+		comparisonTree.push(classNode);
 	}
 
-	return { Identical: errors.length === 0, errors };
+	return comparisonTree;
 }
